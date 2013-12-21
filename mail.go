@@ -3,10 +3,12 @@ package spamme
 import (
 	"appengine"
 	"appengine/datastore"
+	"bytes"
 	"fmt"
 	"html/template"
 	"io/ioutil"
 	"net/http"
+	"net/mail"
 	"time"
 )
 
@@ -19,13 +21,19 @@ const (
 	// TODO: Add a button to pin a message to keep it around another 2h.
 	// TODO: Pagination and search?
 	mailHTML = `<html><body>
-<h3>Mails to: {{.To}}</h3>
+<h1>{{.To}}</h1>
 {{if .Mails}}
 <table border="1">
   {{range .Mails}}
     <tr>
       <td>{{.Received}}</td>
-      <td><pre>{{.Text}}</pre></td>
+      <td>
+        {{if .Raw}}<pre>{{.Raw}}</pre>
+        {{else}}
+          <h3>{{.Subj}}</h3>
+          <pre>{{.Body}}</pre>
+        {{end}}
+      </td>
     </tr>
   {{end}}
 </table>
@@ -118,24 +126,35 @@ func view(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mails := make([]map[string]string, cnt)
-	i := 0
-	for t := q.Run(c); ; i++ {
+	mails := make([]tmplData, 0, cnt)
+	for t := q.Run(c); ; {
 		var m Mail
 		_, err := t.Next(&m)
 		if err == datastore.Done {
 			break
 		} else if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+			c.Errorf("getting mail: %v", err)
+			continue
 		}
-		mails[i] = map[string]string{
-			"Text":     string(m.Text),
-			"Received": m.Received.String(),
+
+		td := tmplData{Received: m.Received.Format(time.RFC850)}
+		parsed, err := mail.ReadMessage(bytes.NewReader(m.Text))
+		if err != nil {
+			c.Infof("error parsing message: %v", err)
+			td.Raw = string(m.Text)
+		} else {
+			td.Subj = parsed.Header.Get("Subject")
+			all, _ := ioutil.ReadAll(parsed.Body)
+			td.Body = string(all)
 		}
+		mails = append(mails, td)
 	}
-	mailTmpl.Execute(w, map[string]interface{}{
-		"To":    to,
-		"Mails": mails,
-	})
+	mailTmpl.Execute(w, struct {
+		To    string
+		Mails []tmplData
+	}{to, mails})
+}
+
+type tmplData struct {
+	Subj, Body, Received, Raw string
 }
