@@ -12,8 +12,8 @@ import (
 
 const (
 	deleteAfter = 24 * time.Hour
-	limit = 100
-	kind = "Mail"
+	limit       = 100
+	kind        = "Mail"
 
 	// TODO: Add a button to immediately delete a message.
 	// TODO: Add a button to pin a message to keep it around another 2h.
@@ -52,9 +52,9 @@ func init() {
 var mailTmpl = template.Must(template.New("mails").Parse(mailHTML))
 
 type Mail struct {
-	To       string
-	Text     []byte
-	Received time.Time
+	To          string
+	Text        []byte
+	Received    time.Time
 	DeleteAfter time.Time
 }
 
@@ -72,9 +72,9 @@ func inbound(w http.ResponseWriter, r *http.Request) {
 
 	now := time.Now()
 	m := Mail{
-		To:       r.URL.Path[len("/_ah/mail/"):],
-		Text:     b,
-		Received: now,
+		To:          r.URL.Path[len("/_ah/mail/"):],
+		Text:        b,
+		Received:    now,
 		DeleteAfter: now.Add(deleteAfter),
 	}
 	if _, err = datastore.Put(c, datastore.NewIncompleteKey(c, kind, nil), &m); err != nil {
