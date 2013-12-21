@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	deleteAfter = 2 * time.Hour
+	deleteAfter = 24 * time.Hour
 	limit = 100
 	kind = "Mail"
 
