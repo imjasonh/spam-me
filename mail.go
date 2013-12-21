@@ -8,7 +8,6 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/mail"
-	"strings"
 	"time"
 )
 
@@ -17,8 +16,6 @@ const (
 	limit       = 100
 	kind        = "Mail"
 
-	// TODO: Add a button to immediately delete a message.
-	// TODO: Add a button to pin a message to keep it around another 2h.
 	// TODO: Pagination and search?
 	mailHTML = `<html><body>
 <h1>{{.To}}</h1>
@@ -39,6 +36,10 @@ const (
           <input type="hidden" name="key" value="{{.Key}}" />
           <input type="submit" value="Pin" />
         </form>
+        <form action="/delete" method="POST">
+          <input type="hidden" name="key" value="{{.Key}}" />
+          <input type="submit" value="Delete Now" />
+        </form>
       </td>
     </tr>
   {{end}}
@@ -53,6 +54,7 @@ func init() {
 	http.HandleFunc("/_ah/mail/", inbound)
 	http.HandleFunc("/reap", reapMail)
 	http.HandleFunc("/pin", pin)
+	http.HandleFunc("/delete", delete2)
 	http.HandleFunc("/inbox/", view)
 }
 
@@ -133,7 +135,7 @@ func view(w http.ResponseWriter, r *http.Request) {
 		}
 
 		td := tmplData{
-			Key: k.Encode(),
+			Key:      k.Encode(),
 			Received: m.Received.Format(time.RFC850),
 		}
 		parsed, err := mail.ReadMessage(bytes.NewReader(m.Text))
@@ -158,6 +160,10 @@ type tmplData struct {
 }
 
 func pin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "must POST", http.StatusNotAcceptable)
+		return
+	}
 	c := appengine.NewContext(r)
 	s := r.FormValue("key")
 	if s == "" {
@@ -185,5 +191,31 @@ func pin(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "error", http.StatusInternalServerError)
 		}
 	}
-	http.Redirect(w, r, "/inbox/"+strings.Split(m.To, "@")[0], http.StatusFound)
+	http.Redirect(w, r, r.Referer(), http.StatusFound)
+}
+
+func delete2(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "must POST", http.StatusNotAcceptable)
+		return
+	}
+	c := appengine.NewContext(r)
+	s := r.FormValue("key")
+	if s == "" {
+		http.Error(w, "missing key", http.StatusBadRequest)
+		return
+	}
+	k, err := datastore.DecodeKey(s)
+	if err != nil {
+		c.Errorf("decoding key: %v", err)
+		http.Error(w, "bad key", http.StatusBadRequest)
+		return
+	}
+	err = datastore.Delete(c, k)
+	if err != nil {
+		c.Errorf("deleting: %v", err)
+		http.Error(w, "error", http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, r.Referer(), http.StatusFound)
 }
