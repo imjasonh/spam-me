@@ -8,6 +8,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/mail"
+	"strings"
 	"time"
 )
 
@@ -33,6 +34,12 @@ const (
           <pre>{{.Body}}</pre>
         {{end}}
       </td>
+      <td>
+        <form action="/pin" method="POST">
+          <input type="hidden" name="key" value="{{.Key}}" />
+          <input type="submit" value="Pin" />
+        </form>
+      </td>
     </tr>
   {{end}}
 </table>
@@ -45,6 +52,7 @@ const (
 func init() {
 	http.HandleFunc("/_ah/mail/", inbound)
 	http.HandleFunc("/reap", reapMail)
+	http.HandleFunc("/pin", pin)
 	http.HandleFunc("/inbox/", view)
 }
 
@@ -116,7 +124,7 @@ func view(w http.ResponseWriter, r *http.Request) {
 	mails := make([]tmplData, 0, cnt)
 	for t := q.Run(c); ; {
 		var m Mail
-		_, err := t.Next(&m)
+		k, err := t.Next(&m)
 		if err == datastore.Done {
 			break
 		} else if err != nil {
@@ -124,7 +132,10 @@ func view(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		td := tmplData{Received: m.Received.Format(time.RFC850)}
+		td := tmplData{
+			Key: k.Encode(),
+			Received: m.Received.Format(time.RFC850),
+		}
 		parsed, err := mail.ReadMessage(bytes.NewReader(m.Text))
 		if err != nil {
 			c.Infof("error parsing message: %v", err)
@@ -143,5 +154,36 @@ func view(w http.ResponseWriter, r *http.Request) {
 }
 
 type tmplData struct {
-	Subj, Body, Received, Raw string
+	Key, Subj, Body, Received, Raw string
+}
+
+func pin(w http.ResponseWriter, r *http.Request) {
+	c := appengine.NewContext(r)
+	s := r.FormValue("key")
+	if s == "" {
+		http.Error(w, "missing key", http.StatusBadRequest)
+		return
+	}
+	k, err := datastore.DecodeKey(s)
+	if err != nil {
+		c.Errorf("decoding key: %v", err)
+		http.Error(w, "bad key", http.StatusBadRequest)
+		return
+	}
+	var m Mail
+	err = datastore.Get(c, k, &m)
+	if err == datastore.ErrNoSuchEntity {
+		http.Error(w, "not found", http.StatusNotFound)
+	} else if err != nil {
+		c.Errorf("getting mail: %v", err)
+		http.Error(w, "error", http.StatusInternalServerError)
+	} else {
+		m.DeleteAfter = time.Now().Add(deleteAfter)
+		_, err = datastore.Put(c, k, &m)
+		if err != nil {
+			c.Errorf("saving mail: %v", err)
+			http.Error(w, "error", http.StatusInternalServerError)
+		}
+	}
+	http.Redirect(w, r, "/inbox/"+strings.Split(m.To, "@")[0], http.StatusFound)
 }

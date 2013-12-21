@@ -12,6 +12,9 @@ handlers:
   login: admin
   script: _go_app
 
+- url: /pin
+  script: _go_app
+
 - url: /inbox/.+
   script: _go_app
 
