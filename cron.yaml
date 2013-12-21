@@ -1,4 +1,4 @@
 cron:
-- name: Reaps old mails
+- description: Reaps old mails
   url: /reap
-  schedule: every 30m
+  schedule: every 30 minutes
