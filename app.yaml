@@ -4,11 +4,15 @@ runtime: go
 api_version: go1
 
 handlers:
+- url: /
+  static_files: explain.html
+  upload: explain.html
+
 - url: /reap
   login: admin
   script: _go_app
 
-- url: /(inbox/.+)?
+- url: /inbox/.+
   script: _go_app
 
 inbound_services:

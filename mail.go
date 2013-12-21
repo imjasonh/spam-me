@@ -4,7 +4,6 @@ import (
 	"appengine"
 	"appengine/datastore"
 	"bytes"
-	"fmt"
 	"html/template"
 	"io/ioutil"
 	"net/http"
@@ -38,15 +37,8 @@ const (
   {{end}}
 </table>
 {{else}}
-  No mails have been sent to this address.
+  No mails have been received at this address.
 {{end}}
-</body></html>`
-
-	explainHTML = `<html><body>
-  <h3>What is this?</h3>
-  <p>Send an email to <b><i>anything</i>@spam-me.appspotmail.com</b>, then visit <a href="/inbox/anything">/inbox/anything</a> to see the emails it has received.</p>
-  <p>This is useful for debugging sending email, and also for signing up for spammy services that require email account authentication.</p>
-  <p>This service is *public* and *not at all secure or reliable*. Please don't use this for anything serious, ever. I mean it.</p>
 </body></html>`
 )
 
@@ -54,7 +46,6 @@ func init() {
 	http.HandleFunc("/_ah/mail/", inbound)
 	http.HandleFunc("/reap", reapMail)
 	http.HandleFunc("/inbox/", view)
-	http.HandleFunc("/", explain)
 }
 
 var mailTmpl = template.Must(template.New("mails").Parse(mailHTML))
@@ -106,10 +97,6 @@ func reapMail(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		c.Errorf("deleting: %v", err)
 	}
-}
-
-func explain(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintf(w, explainHTML)
 }
 
 // view lists the Mails sent to a particular address.
