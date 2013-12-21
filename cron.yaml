@@ -1,0 +1,4 @@
+cron:
+- name: Reaps old mails
+  url: /reap
+  schedule: every 30m

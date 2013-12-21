@@ -1,3 +1,0 @@
-queue:
-- name: reapMail
-  rate: 10/s

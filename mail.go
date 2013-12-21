@@ -3,7 +3,6 @@ package spamme
 import (
 	"appengine"
 	"appengine/datastore"
-	"appengine/taskqueue"
 	"fmt"
 	"html/template"
 	"io/ioutil"
@@ -12,8 +11,9 @@ import (
 )
 
 const (
-	delay = 2 * time.Hour
+	deleteAfter = 2 * time.Hour
 	limit = 100
+	kind = "Mail"
 
 	// TODO: Add a button to immediately delete a message.
 	// TODO: Add a button to pin a message to keep it around another 2h.
@@ -36,7 +36,7 @@ const (
 
 	explainHTML = `<html><body>
   <h3>What is this?</h3>
-  <p>Send an email to <b><i>anything</i>@spam-me.appspotmail.com</b>, then visit <a href="/anything">/anything</a> to see the emails it has received.</p>
+  <p>Send an email to <b><i>anything</i>@spam-me.appspotmail.com</b>, then visit <a href="/inbox/anything">/inbox/anything</a> to see the emails it has received.</p>
   <p>This is useful for debugging sending email, and also for signing up for spammy services that require email account authentication.</p>
   <p>This service is *public* and *not at all secure or reliable*. Please don't use this for anything serious, ever. I mean it.</p>
 </body></html>`
@@ -44,8 +44,9 @@ const (
 
 func init() {
 	http.HandleFunc("/_ah/mail/", inbound)
-	http.HandleFunc("/_ah/queue/reapMail", reapMail)
-	http.HandleFunc("/", view)
+	http.HandleFunc("/reap", reapMail)
+	http.HandleFunc("/inbox/", view)
+	http.HandleFunc("/", explain)
 }
 
 var mailTmpl = template.Must(template.New("mails").Parse(mailHTML))
@@ -54,6 +55,7 @@ type Mail struct {
 	To       string
 	Text     []byte
 	Received time.Time
+	DeleteAfter time.Time
 }
 
 // inbound handles incoming email requests by persisting a new Mail and enqueing
@@ -68,54 +70,45 @@ func inbound(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
+	now := time.Now()
 	m := Mail{
 		To:       r.URL.Path[len("/_ah/mail/"):],
 		Text:     b,
-		Received: time.Now(),
+		Received: now,
+		DeleteAfter: now.Add(deleteAfter),
 	}
-	dsKey, err := datastore.Put(c, datastore.NewIncompleteKey(c, "Mail", nil), &m)
-	if err != nil {
+	if _, err = datastore.Put(c, datastore.NewIncompleteKey(c, kind, nil), &m); err != nil {
 		c.Errorf("saving mail: %v", err.Error())
-		return
-	}
-
-	task := taskqueue.Task{
-		Delay:   delay,
-		Payload: []byte(dsKey.String()),
-	}
-	if _, err = taskqueue.Add(c, &task, "reapMail"); err != nil {
-		c.Errorf("enqueing task: %v", err)
 	}
 }
 
-// reapMail handles a TaskQueue request to delete an old Mail.
-// TODO: Instead of enqueueing this when mails are received, run an hourly job
-// that deletes anything received >2h ago.
+// reapMail runs periodically and deletes old mail.
 func reapMail(w http.ResponseWriter, r *http.Request) {
 	c := appengine.NewContext(r)
-
-	key, err := ioutil.ReadAll(r.Body)
+	q := datastore.NewQuery(kind).
+		Filter("DeleteAfter >=", time.Now()).
+		KeysOnly()
+	ks, err := q.GetAll(c, nil)
+	c.Infof("deleting %d mails", len(ks))
 	if err != nil {
-		c.Errorf("reading key: %v", err)
+		c.Errorf("getting keys: %v", err)
 		return
 	}
-	dsKey := datastore.NewKey(c, "Mail", string(key), 0, nil)
-	if err := datastore.Delete(c, dsKey); err != nil {
-		c.Errorf("deleting mail: %v", err)
+	err = datastore.DeleteMulti(c, ks)
+	if err != nil {
+		c.Errorf("deleting: %v", err)
 	}
+}
+
+func explain(w http.ResponseWriter, r *http.Request) {
+	fmt.Fprintf(w, explainHTML)
 }
 
 // view lists the Mails sent to a particular address.
 func view(w http.ResponseWriter, r *http.Request) {
 	c := appengine.NewContext(r)
-
-	if r.URL.Path == "/" {
-		fmt.Fprintf(w, explainHTML)
-		return
-	}
-	to := r.URL.Path[1:] + "@spam-me.appspotmail.com"
-
-	q := datastore.NewQuery("Mail").
+	to := r.URL.Path[len("/inbox/"):] + "@spam-me.appspotmail.com"
+	q := datastore.NewQuery(kind).
 		Filter("To =", to).
 		Order("-Received").
 		Limit(limit)
